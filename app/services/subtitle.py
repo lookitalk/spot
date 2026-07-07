@@ -3,7 +3,10 @@ import os.path
 import re
 from timeit import default_timer as timer
 
-from faster_whisper import WhisperModel
+try:
+    from faster_whisper import WhisperModel
+except ImportError:
+    WhisperModel = None
 from loguru import logger
 
 from app.config import config
@@ -17,6 +20,9 @@ model = None
 
 def create(audio_file, subtitle_file: str = ""):
     global model
+    if WhisperModel is None:
+        logger.warning("faster_whisper not available, skipping whisper subtitle generation")
+        return ""
     if not model:
         model_path = f"{utils.root_dir()}/models/whisper-{model_size}"
         model_bin_file = f"{model_path}/model.bin"
@@ -155,6 +161,13 @@ def file_to_subtitles(filename):
                 current_times, current_text = None, ""
             elif current_times:
                 current_text += line
+
+    # Flush the final block. SRT files whose last subtitle is not followed by a
+    # trailing blank line never hit the blank-line branch above, so without this
+    # the last subtitle would be silently dropped.
+    if current_times:
+        index += 1
+        times_texts.append((index, current_times.strip(), current_text.strip()))
     return times_texts
 
 
@@ -186,7 +199,8 @@ def similarity(a, b):
 
 def correct(subtitle_file, video_script):
     subtitle_items = file_to_subtitles(subtitle_file)
-    script_lines = utils.split_string_by_punctuations(video_script)
+    normalized_script = utils.normalize_script_for_subtitle_matching(video_script)
+    script_lines = utils.split_string_by_punctuations(normalized_script)
 
     corrected = False
     new_subtitle_items = []
